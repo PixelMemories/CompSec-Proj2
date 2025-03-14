@@ -1,51 +1,102 @@
 #!/usr/bin/python3
 import socket
+import hashlib
+import base64
+import os
+from datetime import datetime
+
+DIFFICULTY = 22  # Required leading zero bits for proof-of-work
+
+def has_valid_pow(full_message, difficulty=DIFFICULTY):
+    
+    h = hashlib.sha256(full_message.encode('utf-8')).digest()
+    h_int = int.from_bytes(h, byteorder='big')
+    return (h_int >> (256 - difficulty)) == 0
+
+def compute_log_entry_hash(log_entry):
+
+    hash_bytes = hashlib.sha256(log_entry.encode('utf-8')).digest()
+    b64_hash = base64.b64encode(hash_bytes).decode('utf-8')
+    return b64_hash[-24:]
 
 def handle_client(client_socket):
     try:
-        # Use socket file interface to read line by line
         with client_socket.makefile('r') as client_in, client_socket.makefile('w') as client_out:
-            # Receive the string from the client (terminated by a newline)
-            message = client_in.readline().strip()
-            print(f"Received: {message}")
+            raw_message = client_in.readline().strip()
+            if not raw_message:
+                client_out.write("failed: Empty message\n")
+                client_out.flush()
+                return
 
+            # Ensure the message contains a colon separating the proof-of-work from the log text.
+            if ':' not in raw_message:
+                client_out.write("failed: Invalid message format (missing colon)\n")
+                client_out.flush()
+                return
 
-            ########## YOUR CODE HERE ############
-            ### Validate the the PoW in the message
-            ### Stril the PoW from the message
-            ### Read the last hash from loghead.txt
-            ### Create the full line for the log entry
-            ### Compute its hash
-            ### Append the line to the log
-            ### Update loghead.txt
-            ### Add error checking
-            #######################################
+            # Validate the proof-of-work by checking the hash.
+            if not has_valid_pow(raw_message):
+                client_out.write("failed: Invalid proof-of-work\n")
+                client_out.flush()
+                return
 
-            # Append the received string to log.txt
+            # Strip off the proof-of-work portion.
+            try:
+                _, log_text = raw_message.split(":", 1)
+            except Exception:
+                client_out.write("failed: Error parsing message\n")
+                client_out.flush()
+                return
+
+            # Determine the previous hash.
+            if not os.path.exists("log.txt"):
+                prev_hash = "start"
+            else:
+                if not os.path.exists("loghead.txt"):
+                    client_out.write("failed: loghead.txt missing\n")
+                    client_out.flush()
+                    return
+                with open("loghead.txt", "r") as head_file:
+                    prev_hash = head_file.read().strip()
+
+            # Generate the current timestamp 
+            timestamp = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')
+            log_entry = f"{timestamp} - {prev_hash} {log_text}"
+
+            # Append the log entry to log.txt.
             with open("log.txt", "a") as log_file:
-                log_file.write(message + "\n")
+                log_file.write(log_entry + "\n")
 
-            # Send a response message back to the client (terminated by a newline)
-            response = "ok\n"
-            client_out.write(response)
+            # Compute the new head hash from the log entry.
+            new_hash = compute_log_entry_hash(log_entry)
+
+            # Update loghead.txt with the new hash.
+            with open("loghead.txt", "w") as head_file:
+                head_file.write(new_hash)
+
+            # Send a success response.
+            client_out.write("ok\n")
             client_out.flush()
-
     except Exception as e:
-        print(f"logserver: {e}")
+        try:
+            # Attempt to send an error message back to the client.
+            client_socket.makefile('w').write(f"failed: {e}\n")
+            client_socket.makefile('w').flush()
+        except Exception:
+            pass
+        print(f"logserver error: {e}")
     finally:
         client_socket.close()
 
 def start_server():
-    # Create a socket and bind it to any available port
+    # Create a TCP socket and bind to any available port.
     server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    server_socket.bind(('0.0.0.0', 0))  # Bind to any available port
+    server_socket.bind(('0.0.0.0', 0))  # Bind to any available port.
     server_socket.listen(5)
-
-    # Get the port number and print it
     port = server_socket.getsockname()[1]
     print(f"Server listening on port {port}")
 
-    # Continuously accept and handle clients
+    # Continuously accept and handle client connections.
     while True:
         client_socket, addr = server_socket.accept()
         print(f"Accepted connection from {addr}")
@@ -53,4 +104,3 @@ def start_server():
 
 if __name__ == "__main__":
     start_server()
-

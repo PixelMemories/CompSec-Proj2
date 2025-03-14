@@ -1,37 +1,67 @@
 #!/usr/bin/python3
 import socket
 import sys
+import hashlib
+import itertools
+import string
 
-def send_string_to_server(port, message):
+def generate_proof_of_work(message, difficulty):
+    
+    allowed = string.ascii_letters + string.digits
+    # Try increasing lengths until we find a valid prefix.
+    for length in range(1, 10):  
+        for candidate_tuple in itertools.product(allowed, repeat=length):
+            candidate = ''.join(candidate_tuple)
+            test_str = candidate + ":" + message
+            hash_bytes = hashlib.sha256(test_str.encode('utf-8')).digest()
+            hash_int = int.from_bytes(hash_bytes, byteorder='big')
+            if hash_int >> (256 - difficulty) == 0:
+                return candidate
+    return None
+
+def send_string_to_server(port, message, difficulty):
     try:
-        # Connect to the server
+        normalized_message = " ".join(message.split())
+        # Generate a valid proof-of-work string.
+        pow_str = generate_proof_of_work(normalized_message, difficulty)
+        if pow_str is None:
+            print("Failed to generate proof-of-work")
+            return
+        # Prepend the proof-of-work string and a colon.
+        full_message = f"{pow_str}:{normalized_message}"
+
+        # Connect to the server and send the message.
         client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         client_socket.connect(('localhost', port))
-
-        ######################
-        ### Convert any whitespace to spaces
-        ### Modify the messsage to include the proof-of-work (Pow+':'+message)
-        ######################
-
         with client_socket.makefile('r') as server_in, client_socket.makefile('w') as server_out:
-            # Send the message to the server, terminated by a newline
-            server_out.write(message + "\n")
+            server_out.write(full_message + "\n")
             server_out.flush()
-
-            # Receive and print the confirmation message from the server
             response = server_in.readline().strip()
             print(f"Server response: {response}")
-
     except Exception as e:
         print(f"Error communicating with server: {e}")
     finally:
         client_socket.close()
 
-if __name__ == "__main__":
-    if len(sys.argv) != 3:
-        print("Usage: log <port> <message>")
+def main():
+    args = sys.argv[1:]
+    difficulty = 22 
+    if len(args) not in [2, 4]:
+        print("Usage: log [-b difficulty] <port> <message>")
+        sys.exit(1)
+    if args[0] == "-b":
+        try:
+            difficulty = int(args[1])
+        except ValueError:
+            print("Invalid difficulty value")
+            sys.exit(1)
+        port = int(args[2])
+        message = args[3]
     else:
-        port = int(sys.argv[1])
-        message = sys.argv[2]
-        send_string_to_server(port, message)
+        port = int(args[0])
+        message = args[1]
 
+    send_string_to_server(port, message, difficulty)
+
+if __name__ == "__main__":
+    main()

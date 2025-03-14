@@ -1,0 +1,69 @@
+#!/usr/bin/python3
+import sys
+import os
+import hashlib
+import base64
+
+def compute_log_entry_hash(log_entry):
+
+    hash_bytes = hashlib.sha256(log_entry.encode('utf-8')).digest()
+    b64_hash = base64.b64encode(hash_bytes).decode('utf-8')
+    return b64_hash[-24:]
+
+def main():
+    # Ensure no extra arguments.
+    if len(sys.argv) != 1:
+        print("Usage: checklog")
+        sys.exit(1)
+
+    # Verify that both loghead.txt and log.txt exist.
+    if not os.path.exists("loghead.txt"):
+        print("failed: loghead.txt missing")
+        sys.exit(1)
+    if not os.path.exists("log.txt"):
+        print("failed: log.txt missing")
+        sys.exit(1)
+
+    with open("log.txt", "r") as log_file:
+        lines = [line.rstrip("\n") for line in log_file.readlines()]
+
+    if not lines:
+        print("failed: log.txt is empty")
+        sys.exit(1)
+
+    # Verify the first log entry contains "start" as its previous hash.
+    tokens = lines[0].split(" ", 3) 
+    if len(tokens) < 3:
+        print("failed: Malformed log entry at line 1")
+        sys.exit(1)
+    if tokens[2] != "start":
+        print("failed: First log entry does not start with 'start'")
+        sys.exit(1)
+        
+    for i in range(len(lines) - 1):
+        current_line = lines[i]
+        next_line = lines[i + 1]
+        computed_hash = compute_log_entry_hash(current_line)
+        next_tokens = next_line.split(" ", 3)
+        if len(next_tokens) < 3:
+            print(f"failed: Malformed log entry at line {i + 2}")
+            sys.exit(1)
+        stored_hash = next_tokens[2]
+        if computed_hash != stored_hash:
+            print(f"failed: Log entry {i + 1} is corrupted")
+            sys.exit(1)
+
+    # For the last log entry, verify that its computed hash matches the contents of loghead.txt.
+    last_line = lines[-1]
+    computed_last = compute_log_entry_hash(last_line)
+    with open("loghead.txt", "r") as head_file:
+        head_hash = head_file.read().strip()
+    if computed_last != head_hash:
+        print("failed: Last log entry does not match head pointer")
+        sys.exit(1)
+
+    print("Valid")
+    sys.exit(0)
+
+if __name__ == "__main__":
+    main()
